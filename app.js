@@ -233,10 +233,18 @@ const State = {
 
     saveProjectLocally(name = this.projectName) {
         saveActivePageDOM();
+        
+        let projectsList = JSON.parse(localStorage.getItem('1m_screenplay_projects_list') || '[]');
+        if (!projectsList.includes(name) && projectsList.length >= 3) {
+            alert("Maximum limit of 3 projects reached.\nDelete an existing project before creating or saving another.");
+            return;
+        }
+        
         const projectData = {
             projectName: name,
             pages: this.pages,
             currentPageIndex: this.currentPageIndex,
+            activeLineIndex: this.activeLineIndex,
             favorites: this.favorites,
             recentItems: this.recentItems,
             updatedAt: new Date().toISOString()
@@ -245,7 +253,6 @@ const State = {
         localStorage.setItem(`1m_screenplay_project_${name.replace(/\s+/g, '_')}`, JSON.stringify(projectData));
         
         // Update project list
-        let projectsList = JSON.parse(localStorage.getItem('1m_screenplay_projects_list') || '[]');
         if (!projectsList.includes(name)) {
             projectsList.push(name);
             localStorage.setItem('1m_screenplay_projects_list', JSON.stringify(projectsList));
@@ -281,26 +288,96 @@ document.addEventListener('DOMContentLoaded', () => {
     State.saveToHistory();
 });
 
+// Safe migration for legacy single-project data
+function migrateLegacyData() {
+    let projectsList = localStorage.getItem('1m_screenplay_projects_list');
+    if (projectsList !== null) {
+        return;
+    }
+    
+    const legacyPagesRaw = localStorage.getItem('1m_screenplay_pages');
+    const legacyFavsRaw = localStorage.getItem('1m_screenplay_favorites');
+    const legacyRecentsRaw = localStorage.getItem('1m_screenplay_recents');
+    
+    let pages = [createEmptyPage()];
+    let favorites = [];
+    let recentItems = [];
+    let hasLegacy = false;
+    
+    if (legacyPagesRaw) {
+        try {
+            pages = JSON.parse(legacyPagesRaw);
+            hasLegacy = true;
+        } catch (e) {
+            console.error("Error parsing legacy pages:", e);
+        }
+    }
+    
+    if (legacyFavsRaw) {
+        try {
+            favorites = JSON.parse(legacyFavsRaw);
+            hasLegacy = true;
+        } catch (e) {
+            console.error("Error parsing legacy favorites:", e);
+        }
+    }
+    
+    if (legacyRecentsRaw) {
+        try {
+            recentItems = JSON.parse(legacyRecentsRaw);
+            hasLegacy = true;
+        } catch (e) {
+            console.error("Error parsing legacy recents:", e);
+        }
+    }
+    
+    if (!hasLegacy) {
+        const existingProjectRaw = localStorage.getItem('1m_screenplay_project_Untitled_Screenplay');
+        if (existingProjectRaw) {
+            hasLegacy = true;
+            try {
+                const data = JSON.parse(existingProjectRaw);
+                pages = data.pages || pages;
+                favorites = data.favorites || favorites;
+                recentItems = data.recentItems || recentItems;
+            } catch (e) {
+                console.error("Error parsing existing Untitled Screenplay:", e);
+            }
+        }
+    }
+    
+    const defaultName = "Untitled Screenplay";
+    const projectData = {
+        projectName: defaultName,
+        pages: pages,
+        currentPageIndex: 0,
+        activeLineIndex: 0,
+        favorites: favorites,
+        recentItems: recentItems,
+        updatedAt: new Date().toISOString()
+    };
+    
+    localStorage.setItem(`1m_screenplay_project_${defaultName.replace(/\s+/g, '_')}`, JSON.stringify(projectData));
+    localStorage.setItem('1m_screenplay_projects_list', JSON.stringify([defaultName]));
+    localStorage.setItem('1m_screenplay_last_project', defaultName);
+}
+
 // Load favorites, recent, and last project from LocalStorage
 function loadAppState() {
-    // Load favorites
-    State.favorites = JSON.parse(localStorage.getItem('1m_screenplay_favorites') || '[]');
-    State.recentItems = JSON.parse(localStorage.getItem('1m_screenplay_recents') || '[]');
+    migrateLegacyData();
     
     // Check autosave toggle
     const autosaveCheckbox = document.getElementById('toggle-autosave');
     State.autoSave = autosaveCheckbox.checked;
     
-    const lastProject = localStorage.getItem('1m_screenplay_last_project');
-    if (lastProject) {
-        loadProject(lastProject);
-    } else {
-        State.pages = [createEmptyPage()];
-        State.currentPageIndex = 0;
-        State.activeLineIndex = 0;
-        renderActivePage();
-        updatePageIndicator();
+    const projectsList = JSON.parse(localStorage.getItem('1m_screenplay_projects_list') || '[]');
+    let lastProject = localStorage.getItem('1m_screenplay_last_project');
+    
+    if (!lastProject || !projectsList.includes(lastProject)) {
+        lastProject = projectsList[0] || "Untitled Screenplay";
     }
+    
+    loadProject(lastProject);
 }
 
 // Load project by name from LocalStorage
@@ -311,12 +388,23 @@ function loadProject(name) {
         State.projectName = data.projectName;
         State.pages = data.pages || [createEmptyPage()];
         State.currentPageIndex = data.currentPageIndex || 0;
-        State.activeLineIndex = 0;
+        State.activeLineIndex = data.activeLineIndex !== undefined ? data.activeLineIndex : 0;
+        State.favorites = data.favorites || [];
+        State.recentItems = data.recentItems || [];
         
         projectTitle.innerText = State.projectName;
         updatePageIndicator();
         renderActivePage();
+        renderFavorites();
+        renderRecentItems();
+        
+        // Reset history stack
+        State.historyStack = [];
+        State.historyIndex = -1;
+        State.saveToHistory();
+        
         showSaveStatus("Loaded");
+        focusLine(State.activeLineIndex);
     }
 }
 
@@ -351,10 +439,32 @@ function saveActivePageDOM() {
 function setupEventListeners() {
     // Title Input
     projectTitle.addEventListener('blur', () => {
-        const newTitle = projectTitle.innerText.trim() || "Untitled Screenplay";
-        if (newTitle !== State.projectName) {
-            State.projectName = newTitle;
-            State.saveToHistory();
+        const newTitle = projectTitle.innerText.trim();
+        const oldTitle = State.projectName;
+        
+        if (newTitle === oldTitle) return;
+        
+        if (!newTitle) {
+            alert("Project name cannot be blank.");
+            projectTitle.innerText = oldTitle;
+            return;
+        }
+        
+        const list = JSON.parse(localStorage.getItem('1m_screenplay_projects_list') || '[]');
+        if (list.includes(newTitle)) {
+            alert(`A project named "${newTitle}" already exists.`);
+            projectTitle.innerText = oldTitle;
+            return;
+        }
+        
+        renameProject(oldTitle, newTitle);
+        State.saveToHistory();
+    });
+
+    projectTitle.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            projectTitle.blur();
         }
     });
 
@@ -1156,7 +1266,9 @@ let activeModalAction = null;
 function showModal(title, bodyHtml, confirmText, actionCallback) {
     document.getElementById('modal-title').innerText = title;
     document.getElementById('modal-body').innerHTML = bodyHtml;
-    document.getElementById('modal-btn-confirm').innerText = confirmText;
+    const confirmBtn = document.getElementById('modal-btn-confirm');
+    confirmBtn.innerText = confirmText;
+    confirmBtn.style.display = ''; // Reset display style
     activeModalAction = actionCallback;
     document.getElementById('modal-project').classList.add('active');
 }
@@ -1175,17 +1287,53 @@ function confirmModalAction() {
 
 // Save & New dialog triggers
 function createNewProject() {
-    if (confirm("Create a new screenplay? Make sure you have saved your current work.")) {
-        State.projectName = "Untitled Screenplay";
-        State.pages = [createEmptyPage()];
-        State.currentPageIndex = 0;
-        State.activeLineIndex = 0;
-        projectTitle.innerText = State.projectName;
-        updatePageIndicator();
-        renderActivePage();
-        State.saveToHistory();
-        focusLine(0);
+    const list = JSON.parse(localStorage.getItem('1m_screenplay_projects_list') || '[]');
+    if (list.length >= 3) {
+        alert("Maximum limit of 3 projects reached.\nDelete an existing project before creating another.");
+        return;
     }
+    
+    const name = prompt("Project Name");
+    if (name === null) return; // Cancelled
+    
+    const trimmed = name.trim();
+    if (!trimmed) {
+        alert("Project name cannot be blank.");
+        return;
+    }
+    
+    if (list.includes(trimmed)) {
+        alert(`A project named "${trimmed}" already exists.`);
+        return;
+    }
+    
+    // Auto-save current project first
+    saveActivePageDOM();
+    State.saveProjectLocally();
+    
+    // Set up new project state
+    State.projectName = trimmed;
+    State.pages = [createEmptyPage()];
+    State.currentPageIndex = 0;
+    State.activeLineIndex = 0;
+    State.favorites = [];
+    State.recentItems = [];
+    
+    projectTitle.innerText = State.projectName;
+    updatePageIndicator();
+    renderActivePage();
+    renderFavorites();
+    renderRecentItems();
+    
+    // Save the new project immediately
+    State.saveProjectLocally(trimmed);
+    
+    // Reset history stack
+    State.historyStack = [];
+    State.historyIndex = -1;
+    State.saveToHistory();
+    
+    focusLine(0);
 }
 
 function showSaveAsModal() {
@@ -1203,6 +1351,17 @@ function showSaveAsModal() {
     });
 }
 
+function escapeHtml(text) {
+    const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+}
+
 function showOpenProjectModal() {
     const list = JSON.parse(localStorage.getItem('1m_screenplay_projects_list') || '[]');
     if (list.length === 0) {
@@ -1210,19 +1369,27 @@ function showOpenProjectModal() {
         return;
     }
     
-    let html = '<div style="max-height: 250px; overflow-y:auto;">';
+    let html = '<div style="max-height: 250px; overflow-y:auto; display: flex; flex-direction: column; gap: 8px;">';
     list.forEach(proj => {
+        const isActive = proj === State.projectName;
+        const escapedProj = proj.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+        const safeName = escapeHtml(proj);
         html += `
-            <div class="project-item-row" onclick="loadProject('${proj}'); hideModal();">
-                <span><i class="fa-solid fa-file-signature"></i> ${proj}</span>
-                <span style="font-size:0.75rem; color:var(--text-muted);">Open</span>
+            <div class="project-item-row" style="display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid var(--border-color); ${isActive ? 'background-color: rgba(255, 199, 44, 0.03); border-left: 3px solid var(--accent-gold);' : ''}">
+                <span class="project-item-name" onclick="switchProject('${escapedProj}'); hideModal();" style="flex-grow: 1; display: flex; align-items: center; gap: 8px; cursor: pointer; color: ${isActive ? 'var(--accent-gold)' : 'var(--text-main)'}; font-weight: ${isActive ? '600' : 'normal'};">
+                    <i class="fa-solid fa-file-lines"></i> ${safeName}
+                </span>
+                <div class="project-item-actions" style="display: flex; gap: 8px;">
+                    <button class="btn-project-action" onclick="event.stopPropagation(); promptRenameProject('${escapedProj}');" title="Rename" style="background: transparent; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; font-size: 0.9rem; transition: color 0.2s ease;"><i class="fa-solid fa-pen"></i></button>
+                    <button class="btn-project-action delete" onclick="event.stopPropagation(); deleteProject('${escapedProj}');" title="Delete" style="background: transparent; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; font-size: 0.9rem; transition: color 0.2s ease;"><i class="fa-solid fa-trash"></i></button>
+                </div>
             </div>
         `;
     });
     html += '</div>';
 
     // Show modal without confirming button
-    showModal("Open Saved Project", html, "Cancel", () => {});
+    showModal("Project Manager", html, "Close", () => {});
     document.getElementById('modal-btn-confirm').style.display = 'none';
 }
 
@@ -1236,14 +1403,160 @@ function renderRecentProjectsMenu() {
         return;
     }
     
-    list.slice(-5).reverse().forEach(proj => {
+    // Show max 3 projects
+    list.slice(-3).reverse().forEach(proj => {
         const btn = document.createElement('button');
-        btn.innerHTML = `<i class="fa-solid fa-file-lines"></i> ${proj}`;
+        btn.innerText = ` ${proj}`;
+        btn.insertAdjacentHTML('afterbegin', '<i class="fa-solid fa-file-lines"></i>');
         btn.addEventListener('click', () => {
-            loadProject(proj);
+            switchProject(proj);
         });
         container.appendChild(btn);
     });
+}
+
+function switchProject(name) {
+    if (name === State.projectName) return;
+    
+    // Save current active project state first
+    saveActivePageDOM();
+    State.saveProjectLocally();
+    
+    // Load the selected project
+    loadProject(name);
+}
+
+function promptRenameProject(oldName) {
+    const newName = prompt("Rename project to:", oldName);
+    if (newName === null) return; // Cancelled
+    
+    const trimmed = newName.trim();
+    if (!trimmed) {
+        alert("Project name cannot be blank.");
+        return;
+    }
+    
+    if (trimmed === oldName) return;
+    
+    const list = JSON.parse(localStorage.getItem('1m_screenplay_projects_list') || '[]');
+    if (list.includes(trimmed)) {
+        alert(`A project named "${trimmed}" already exists.`);
+        return;
+    }
+    
+    renameProject(oldName, trimmed);
+    
+    // Refresh modal if it is active
+    const modal = document.getElementById('modal-project');
+    if (modal && modal.classList.contains('active')) {
+        showOpenProjectModal();
+    }
+}
+
+function renameProject(oldName, newName) {
+    const list = JSON.parse(localStorage.getItem('1m_screenplay_projects_list') || '[]');
+    
+    // Save current active project state first if renaming it
+    if (oldName === State.projectName) {
+        saveActivePageDOM();
+    }
+    
+    const oldKey = `1m_screenplay_project_${oldName.replace(/\s+/g, '_')}`;
+    const newKey = `1m_screenplay_project_${newName.replace(/\s+/g, '_')}`;
+    const rawData = localStorage.getItem(oldKey);
+    
+    let projectData;
+    if (rawData) {
+        try {
+            projectData = JSON.parse(rawData);
+            projectData.projectName = newName;
+            projectData.updatedAt = new Date().toISOString();
+        } catch (e) {
+            console.error(e);
+        }
+    }
+    
+    if (!projectData) {
+        projectData = {
+            projectName: newName,
+            pages: State.pages,
+            currentPageIndex: State.currentPageIndex,
+            activeLineIndex: State.activeLineIndex,
+            favorites: State.favorites,
+            recentItems: State.recentItems,
+            updatedAt: new Date().toISOString()
+        };
+    }
+    
+    localStorage.setItem(newKey, JSON.stringify(projectData));
+    if (oldKey !== newKey) {
+        localStorage.removeItem(oldKey);
+    }
+    
+    const newList = list.map(name => name === oldName ? newName : name);
+    localStorage.setItem('1m_screenplay_projects_list', JSON.stringify(newList));
+    
+    if (oldName === State.projectName) {
+        State.projectName = newName;
+        projectTitle.innerText = newName;
+        localStorage.setItem('1m_screenplay_last_project', newName);
+    }
+    
+    renderRecentProjectsMenu();
+    showSaveStatus("Renamed");
+}
+
+function deleteProject(name) {
+    if (confirm(`Delete Project?\nThis action cannot be undone.`)) {
+        const list = JSON.parse(localStorage.getItem('1m_screenplay_projects_list') || '[]');
+        
+        // Remove storage key
+        const key = `1m_screenplay_project_${name.replace(/\s+/g, '_')}`;
+        localStorage.removeItem(key);
+        
+        // Update list
+        const newList = list.filter(item => item !== name);
+        localStorage.setItem('1m_screenplay_projects_list', JSON.stringify(newList));
+        
+        // If deleted project was active
+        if (name === State.projectName) {
+            if (newList.length > 0) {
+                // Switch to next available project
+                loadProject(newList[0]);
+            } else {
+                // Create new default Untitled Screenplay project
+                const defaultName = "Untitled Screenplay";
+                State.projectName = defaultName;
+                State.pages = [createEmptyPage()];
+                State.currentPageIndex = 0;
+                State.activeLineIndex = 0;
+                State.favorites = [];
+                State.recentItems = [];
+                
+                projectTitle.innerText = defaultName;
+                updatePageIndicator();
+                renderActivePage();
+                renderFavorites();
+                renderRecentItems();
+                
+                State.saveProjectLocally(defaultName);
+                
+                State.historyStack = [];
+                State.historyIndex = -1;
+                State.saveToHistory();
+            }
+        } else {
+            renderRecentProjectsMenu();
+        }
+        
+        // Refresh modal if it is active
+        const modal = document.getElementById('modal-project');
+        if (modal && modal.classList.contains('active')) {
+            showOpenProjectModal();
+        }
+        
+        showSaveStatus("Deleted");
+    }
 }
 
 function exportToPDF() {

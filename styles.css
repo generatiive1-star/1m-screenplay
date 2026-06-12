@@ -1006,3 +1006,12 @@ kbd {
         color: #000000 !important;
     }
 }
+
+/* Project Manager Action Button Hover States */
+.btn-project-action:hover {
+    color: var(--accent-gold) !important;
+}
+.btn-project-action.delete:hover {
+    color: #ff4a4a !important;
+}
+
