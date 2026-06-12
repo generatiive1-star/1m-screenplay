@@ -665,7 +665,6 @@ function handleEditorPaste(e) {
     
     saveActivePageDOM();
     
-    const pageData = State.pages[State.currentPageIndex];
     let currentIdx = State.activeLineIndex;
     
     // Paste first line at selection
@@ -692,7 +691,7 @@ function handleEditorPaste(e) {
         for (let i = 1; i < lines.length; i++) {
             if (currentIdx < 49) {
                 currentIdx++;
-                pageData[currentIdx] = {
+                State.pages[State.currentPageIndex][currentIdx] = {
                     text: lines[i],
                     type: 'user-text',
                     elementId: ''
@@ -706,8 +705,7 @@ function handleEditorPaste(e) {
                     State.currentPageIndex = State.pages.length - 1;
                 }
                 currentIdx = 0;
-                const nextPageData = State.pages[State.currentPageIndex];
-                nextPageData[currentIdx] = {
+                State.pages[State.currentPageIndex][currentIdx] = {
                     text: lines[i],
                     type: 'user-text',
                     elementId: ''
@@ -1037,6 +1035,49 @@ function insertMainElement(elementId, elementName) {
     State.saveToHistory();
 }
 
+function selectTextRange(element, start, end) {
+    setTimeout(() => {
+        element.focus();
+        const range = document.createRange();
+        const sel = window.getSelection();
+        
+        let textNode = element.firstChild;
+        if (!textNode) return;
+        if (textNode.nodeType !== Node.TEXT_NODE) {
+            textNode = textNode.firstChild;
+        }
+        if (!textNode) return;
+        
+        range.setStart(textNode, start);
+        range.setEnd(textNode, end);
+        sel.removeAllRanges();
+        sel.addRange(range);
+    }, 0);
+}
+
+function updateSceneType(currentText, newPrefix) {
+    const prefixes = ["INT./EXT. ", "INT. ", "EXT. "];
+    for (let pref of prefixes) {
+        if (currentText.startsWith(pref)) {
+            return newPrefix + " " + currentText.substring(pref.length);
+        }
+    }
+    return newPrefix + " " + currentText;
+}
+
+function updateSceneTime(currentText, newTime) {
+    const times = [
+        "MOMENTS LATER", "CONTINUOUS", "AFTERNOON", "MORNING", "EVENING",
+        "SUNRISE", "SUNSET", "LATER", "NIGHT", "DUSK", "DAWN", "SAME", "DAY"
+    ];
+    for (let t of times) {
+        if (currentText.endsWith(" " + t)) {
+            return currentText.substring(0, currentText.length - t.length) + newTime;
+        }
+    }
+    return currentText + " " + newTime;
+}
+
 function insertSubterm(elementId, term) {
     let lineIdx = State.activeLineIndex !== undefined ? State.activeLineIndex : findFirstEmptyLine();
     const pageData = State.pages[State.currentPageIndex];
@@ -1045,6 +1086,53 @@ function insertSubterm(elementId, term) {
     let cleanTerm = term;
     if (elementId === 'shot' && term.includes(': ')) {
         cleanTerm = term.split(': ')[1];
+    }
+    
+    // Smart Scene Heading implementation
+    if (elementId === 'scene_heading') {
+        const types = ["INT.", "EXT.", "INT./EXT."];
+        const isType = types.includes(cleanTerm);
+        
+        let lineData = pageData[lineIdx];
+        
+        if (lineData.elementId === 'scene_heading') {
+            // Update existing scene heading
+            let newText = "";
+            if (isType) {
+                newText = updateSceneType(lineData.text, cleanTerm);
+            } else {
+                newText = updateSceneTime(lineData.text, cleanTerm);
+            }
+            
+            lineData.text = newText;
+            renderActivePage();
+            focusLine(lineIdx, false); // Focus at end
+        } else {
+            // Create new scene heading
+            let typePart = isType ? cleanTerm : "INT.";
+            let timePart = isType ? "DAY" : cleanTerm;
+            
+            lineData.text = `${typePart} __________ ${timePart}`;
+            lineData.type = 'sub-term';
+            lineData.elementId = 'scene_heading';
+            
+            renderActivePage();
+            
+            // Highlight the selection of the blank "__________"
+            const lineDiv = editor.querySelector(`[data-line-index="${lineIdx}"]`);
+            if (lineDiv) {
+                const text = lineDiv.innerText;
+                const startIdx = text.indexOf("__________");
+                if (startIdx > -1) {
+                    selectTextRange(lineDiv, startIdx, startIdx + 10);
+                } else {
+                    focusLine(lineIdx, false);
+                }
+            }
+        }
+        
+        State.saveToHistory();
+        return;
     }
     
     pageData[lineIdx] = {
@@ -1239,11 +1327,11 @@ function exportToDOCX() {
         <title>${State.projectName}</title>
         <style>
             body { font-family: 'Courier New', Courier, monospace; font-size: 12pt; color: #000000; margin: 0; padding: 0; }
-            .page-container { width: 8.5in; height: 11in; padding: 1.0in 1.0in 1.0in 1.5in; box-sizing: border-box; }
-            .sp-main-term { text-align: center; font-weight: bold; font-size: 13.2pt; text-transform: uppercase; margin: 0; padding: 0; line-height: 12.96pt; }
-            .sp-sub-term { text-align: left; font-size: 12pt; font-weight: normal; margin: 0; padding: 0; line-height: 12.96pt; }
-            .sp-user-text { text-align: left; font-size: 12pt; font-weight: normal; margin: 0; padding: 0; line-height: 12.96pt; }
-            .sp-line-empty { margin: 0; padding: 0; line-height: 12.96pt; height: 12.96pt; }
+            .page-container { width: 8.5in; height: 11in; padding: 0.5in 1.0in 0.5in 1.5in; box-sizing: border-box; }
+            .sp-main-term { text-align: center; font-weight: bold; font-size: 13.2pt; text-transform: uppercase; margin: 0; padding: 0 4px; line-height: 14.4pt; }
+            .sp-sub-term { text-align: left; font-size: 12pt; font-weight: normal; margin: 0; padding: 0 4px; line-height: 14.4pt; }
+            .sp-user-text { text-align: left; font-size: 12pt; font-weight: normal; margin: 0; padding: 0 4px; line-height: 14.4pt; }
+            .sp-line-empty { margin: 0; padding: 0 4px; line-height: 14.4pt; height: 14.4pt; }
             .page-break { page-break-after: always; }
         </style>
         </head>

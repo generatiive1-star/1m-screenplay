@@ -643,7 +643,7 @@ kbd {
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
     display: flex;
     flex-direction: column;
-    padding: 1.0in 1.0in 1.0in 1.5in; /* Standard screenplay margins */
+    padding: 0.5in 1.0in 0.5in 1.5in; /* Standard screenplay margins, modified top/bottom to prevent clipping */
     box-sizing: border-box;
     overflow: hidden;
 }
@@ -670,20 +670,20 @@ kbd {
 /* Screenplay Element Alignments inside Editor */
 .sp-line {
     width: 100%;
-    height: 0.18in;
-    min-height: 0.18in;
-    max-height: 0.18in;
-    line-height: 0.18in;
+    min-height: 0.20in;
+    line-height: 0.20in;
     font-family: var(--font-script);
     font-size: 12pt;
     outline: none;
     box-sizing: border-box;
     display: block;
     margin: 0;
-    padding: 0;
-    white-space: nowrap;
-    overflow: hidden;
+    padding: 0 4px; /* Horizontal padding to prevent WebKit caret and end-of-line clipping bugs */
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
     color: #000000;
+    overflow: visible;
 }
 
 .sp-line:focus {
@@ -935,7 +935,7 @@ kbd {
     .page-container {
         box-shadow: none !important;
         margin: 0 !important;
-        padding: 1.0in 1.0in 1.0in 1.5in !important;
+        padding: 0.5in 1.0in 0.5in 1.5in !important;
         width: var(--page-width) !important;
         height: var(--page-height) !important;
         min-height: var(--page-height) !important;
@@ -962,19 +962,19 @@ kbd {
     
     .sp-line {
         width: 100% !important;
-        height: 0.18in !important;
-        min-height: 0.18in !important;
-        max-height: 0.18in !important;
-        line-height: 0.18in !important;
+        min-height: 0.20in !important;
+        line-height: 0.20in !important;
         color: #000000 !important;
         font-size: 12pt !important;
         font-family: var(--font-script) !important;
         background-color: transparent !important;
         display: block !important;
         margin: 0 !important;
-        padding: 0 !important;
-        white-space: nowrap !important;
-        overflow: hidden !important;
+        padding: 0 4px !important;
+        white-space: pre-wrap !important;
+        word-wrap: break-word !important;
+        overflow-wrap: break-word !important;
+        overflow: visible !important;
     }
 
     .sp-line-main-term {
